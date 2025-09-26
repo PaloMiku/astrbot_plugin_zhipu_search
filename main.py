@@ -12,7 +12,7 @@ except ImportError:
     logger.warning("zai-sdk 未安装，请运行 pip install zai-sdk>=0.0.3.3")
 
 @register(
-    "zhipu_search", 
+    "astrbot_plugin_zhipu_search", 
     "PaloMiku", 
     "智谱AI联网搜索插件，专为LLM工具函数设计", 
     "1.0.0", 
@@ -56,7 +56,7 @@ class ZhipuSearchPlugin(Star):
         search_domain_filter: Optional[str] = None,
         search_recency_filter: str = "noLimit",
         content_size: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """执行智谱AI网络搜索
         
         Args:
@@ -68,7 +68,7 @@ class ZhipuSearchPlugin(Star):
             content_size: 网页摘要字数(low/medium/high)
             
         Returns:
-            Dict[str, Any]: 智谱AI搜索API响应结果
+            Any: 智谱AI搜索API响应结果 (WebSearchResp对象)
             
         Raises:
             Exception: 当客户端未初始化或搜索请求失败时
@@ -105,44 +105,55 @@ class ZhipuSearchPlugin(Star):
                 logger.error(f"搜索请求失败: {error_msg}")
             raise
 
-    def _format_search_results_for_llm(self, search_response: Dict[str, Any]) -> str:
+    def _format_search_results_for_llm(self, search_response) -> str:
         """格式化搜索结果为LLM专用格式
         
         Args:
             search_response: 智谱AI搜索API响应结果
-            
         Returns:
             str: 结构化的JSON字符串，供LLM处理使用
         """
-        if not search_response or "search_result" not in search_response:
-            logger.warning("搜索响应为空或格式不正确")
+
+        if hasattr(search_response, 'search_result'):
+            results = getattr(search_response, 'search_result', None)
+        elif isinstance(search_response, dict) and "search_result" in search_response:
+            results = search_response["search_result"]
+        else:
+            logger.warning(f"搜索响应格式不正确: {type(search_response)}")
             return json.dumps({"error": "未找到搜索结果"}, ensure_ascii=False)
-        
-        results = search_response["search_result"]
         if not results:
             logger.info("搜索返回空结果")
             return json.dumps({"message": "未找到搜索结果"}, ensure_ascii=False)
-        
         structured_results = []
         for i, result in enumerate(results, 1):
-            structured_result = {
-                "序号": i,
-                "标题": result.get("title", "").strip(),
-                "内容": result.get("content", "").strip(),
-                "来源": result.get("media", "").strip(),
-                "链接": result.get("link", "").strip(),
-                "发布时间": result.get("publish_date", "").strip()
-            }
+
+            if hasattr(result, 'title'):
+                structured_result = {
+                    "序号": i,
+                    "标题": getattr(result, 'title', "") or "",
+                    "内容": getattr(result, 'content', "") or "",
+                    "来源": getattr(result, 'media', "") or "",
+                    "链接": getattr(result, 'link', "") or "",
+                    "发布时间": getattr(result, 'publish_date', "") or ""
+                }
+            else:
+                structured_result = {
+                    "序号": i,
+                    "标题": result.get("title", "").strip(),
+                    "内容": result.get("content", "").strip(),
+                    "来源": result.get("media", "").strip(),
+                    "链接": result.get("link", "").strip(),
+                    "发布时间": result.get("publish_date", "").strip()
+                }
             structured_results.append(structured_result)
-        
         logger.info(f"成功格式化{len(structured_results)}条搜索结果")
         return json.dumps(structured_results, ensure_ascii=False, indent=2)
 
     @filter.llm_tool(name="zhipu_web_search")
     async def llm_web_search_tool(
-        self, 
-        event: AstrMessageEvent, 
-        query: str, 
+        self,
+        event: AstrMessageEvent,
+        query: str,
         count: int = 5
     ) -> MessageEventResult:
         """LLM工具函数：智谱AI网络搜索
@@ -153,7 +164,6 @@ class ZhipuSearchPlugin(Star):
         Args:
             query(string): 搜索查询关键词，描述需要搜索的内容
             count(number): 返回搜索结果的数量，范围1-10，默认5
-            
         Returns:
             MessageEventResult: 格式化的搜索结果，供LLM进一步处理
         """
@@ -161,63 +171,29 @@ class ZhipuSearchPlugin(Star):
             logger.warning("LLM搜索工具函数已被禁用")
             yield event.plain_result("搜索工具函数已被禁用")
             return
-            
-        # 详细的状态检查和日志
         logger.info(f"ZHIPU_AVAILABLE: {ZHIPU_AVAILABLE}")
         logger.info(f"client状态: {self.client is not None}")
         api_key = self.config.get("api_key", "")
         logger.info(f"API Key配置状态: {'已配置' if api_key else '未配置'}")
-        
         if not ZHIPU_AVAILABLE:
             logger.error("智谱AI SDK未安装")
             yield event.plain_result("智谱AI SDK未安装，请运行: pip install zai-sdk>=0.0.3.3")
             return
-            
         if not self.client:
             logger.error("智谱AI客户端未初始化")
             yield event.plain_result("智谱AI客户端未初始化，请检查API Key设置")
             return
-        
         count = max(1, min(10, count))
         logger.info(f"LLM工具函数被调用: 查询='{query}', 数量={count}")
-        
         try:
             search_response = await self._web_search(query=query, count=count)
-            
-            if search_response and "search_result" in search_response:
-                results = search_response["search_result"]
-                if results:
-                    result_json = self._format_search_results_for_llm(search_response)
-                    
-                    search_prompt = self.config.get(
-                        "tool_search_prompt", 
-                        "你是一个专业的信息搜索助手。请基于搜索结果{search_result}提供准确、全面的回答，并引用相关来源。"
-                    )
-                    
-                    final_result = search_prompt.replace("{search_result}", result_json)
-                    
-                    logger.info(f"智谱AI搜索API调用成功: 查询'{query}', 返回{len(results)}条结果")
-                    yield event.plain_result(final_result)
-                else:
-                    logger.info(f"搜索'{query}'未找到结果")
-                    yield event.plain_result(f"搜索'{query}'未找到相关结果")
-            else:
-                logger.warning(f"搜索'{query}'响应格式异常")
-                yield event.plain_result(f"搜索'{query}'未返回有效结果")
-                
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"LLM搜索工具执行失败: {error_msg}")
-            
-            if "401" in error_msg:
-                yield event.plain_result("搜索失败：API Key验证错误，请检查配置中的API Key是否正确，或者账户余额是否充足")
-            elif "403" in error_msg:
-                yield event.plain_result("搜索失败：API权限不足，请检查账户是否开通了网络搜索功能")  
-            elif "429" in error_msg:
-                yield event.plain_result("搜索失败：API请求频率超限，请稍后再试")
-            else:
-                yield event.plain_result(f"搜索工具执行失败: {error_msg}")
+            result_json = self._format_search_results_for_llm(search_response)
 
+            return_to_llm = f"搜索完成！请根据以下搜索结果直接回答用户问题，不要再次搜索：\n\n{result_json}\n\n请立即基于上述搜索结果为用户提供完整的回答。"
+            yield return_to_llm
+        except Exception as e:
+            logger.error(f"LLM搜索工具执行失败: {e}")
+            yield event.plain_result(f"搜索失败: {str(e)}")
     @filter.command("zhipu_config")
     async def show_config(self, event: AstrMessageEvent):
         """显示智谱AI搜索插件配置信息
