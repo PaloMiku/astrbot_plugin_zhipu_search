@@ -1,0 +1,40 @@
+{
+  "api_key": {
+    "description": "智谱AI API Key",
+    "type": "string",
+    "hint": "请在智谱AI开放平台(https://open.bigmodel.cn/usercenter/apikeys)获取API Key",
+    "obvious_hint": true
+  },
+  "default_search_engine": {
+    "description": "默认搜索引擎",
+    "type": "string",
+    "options": ["search_std", "search_pro", "search_pro_sogou", "search_pro_quark"],
+    "default": "search_pro",
+    "hint": "不同搜索引擎的功能区别和资费标准请查看官方文档(https://docs.bigmodel.cn/cn/guide/tools/web-search)"
+  },
+  "default_count": {
+    "description": "默认搜索结果数量",
+    "type": "int",
+    "default": 5,
+    "hint": "LLM工具函数返回搜索结果的条数，范围1-10"
+  },
+  "default_content_size": {
+    "description": "默认网页摘要字数",
+    "type": "string",
+    "options": ["low", "medium", "high"],
+    "default": "medium",
+    "hint": "控制网页摘要的字数长度"
+  },
+  "enable_llm_tool": {
+    "description": "启用LLM工具函数",
+    "type": "bool",
+    "default": true,
+    "hint": "当启用时，智谱AI搜索功能将作为工具函数提供给LLM使用，支持自动联网搜索"
+  },
+  "tool_search_prompt": {
+    "description": "工具函数搜索提示词",
+    "type": "text",
+    "default": "你是一个专业的信息搜索助手。请基于搜索结果{search_result}提供准确、全面的回答，并引用相关来源。",
+    "hint": "当LLM使用搜索工具时的系统提示词，{search_result}会被替换为实际搜索结果"
+  }
+}
